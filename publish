@@ -2,7 +2,8 @@
 
 set -eu pipefail
 
-PUB=${CARGO_TARGET_DIR:target}
+PUB=${CARGO_TARGET_DIR:-target}
 
-echo $PUB
 cargo build --release
+
+mv $PUB/release/dash2gps ~/bin
