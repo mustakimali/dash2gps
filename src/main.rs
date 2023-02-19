@@ -44,11 +44,6 @@ async fn main() -> anyhow::Result<()> {
 
     let mut workers = Vec::new();
     let workspace = Workspace::new()?;
-    // extract frames
-    println!(
-        "Using workspace at: {}",
-        workspace.path.to_str().unwrap_or("")
-    );
 
     let input = std::env::current_dir()?.join(args.input);
     let (sender, receiver) = unbounded();
@@ -82,7 +77,16 @@ fn process_frames_worker(
             };
 
             match detect_location(&source, &tmp_path.clone()) {
-                Ok(location) => println!("{}", location),
+                Ok(location) => {
+                    let coordinates = parser::parse_coordinate_from_lines(location)
+                        .into_iter()
+                        .map(|c| c.to_decimal())
+                        .collect::<Vec<_>>();
+
+                    if !coordinates.is_empty() {
+                        println!("{}", coordinates.join("\n"));
+                    }
+                }
                 Err(e) => eprintln!("Error: {} ({})", e, source.to_string_lossy()),
             }
         }
@@ -152,8 +156,6 @@ impl Workspace {
         let path =
             std::env::temp_dir().join(format!("dash2gps-workspace-{}", Utc::now().timestamp()));
         std::fs::create_dir(path.clone()).context("create temp folder")?;
-
-        println!("Initialised workspace in: {}", path.to_string_lossy());
 
         Ok(Self { path })
     }
