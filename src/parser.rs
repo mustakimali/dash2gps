@@ -20,28 +20,42 @@ pub enum Coordinate {
 
 impl Coordinate {
     pub fn to_decimal(&self) -> String {
+        self.to_decimal_with_format("{lat}, {lon}")
+    }
+
+    pub fn to_decimal_with_format(&self, format: impl Into<String>) -> String {
         match self {
             Coordinate::DegreeMinSec(dms) => {
-                let lat = dms.lat_degree as f32
-                    + (dms.lat_min as f32 / 60.0)
-                    + (dms.lat_sec as f32 / 3600.0);
-                let lon = dms.lon_degree as f32
-                    + (dms.lon_min as f32 / 60.0)
-                    + (dms.lon_sec as f32 / 3600.0);
+                let (lat, lon) = Self::get_lat_lon_for_dms(dms);
 
-                format!(
-                    "{}, {}",
-                    match dms.lat_direction {
+                let f: String = format.into();
+
+                f.replace(
+                    "{lat}",
+                    &match dms.lat_direction {
                         DirectionLat::North => lat,
                         DirectionLat::South => -lat,
-                    },
-                    match dms.lon_direction {
+                    }
+                    .to_string(),
+                )
+                .replace(
+                    "{lon}",
+                    &match dms.lon_direction {
                         DirectionLon::East => lon,
                         DirectionLon::West => -lon,
                     }
+                    .to_string(),
                 )
             }
         }
+    }
+
+    fn get_lat_lon_for_dms(dms: &CoordinateDms) -> (f32, f32) {
+        let lat =
+            dms.lat_degree as f32 + (dms.lat_min as f32 / 60.0) + (dms.lat_sec as f32 / 3600.0);
+        let lon =
+            dms.lon_degree as f32 + (dms.lon_min as f32 / 60.0) + (dms.lon_sec as f32 / 3600.0);
+        (lat, lon)
     }
 }
 

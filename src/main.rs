@@ -34,6 +34,9 @@ struct Args {
 
     #[arg(long, default_value = "4")]
     threads: u8,
+
+    #[arg(long, default_value = "{lat},{lon}")]
+    output_format: String,
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -41,6 +44,9 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    // find data dir
+    let data_dir = find_data_dir()?;
 
     let mut workers = Vec::new();
     let workspace = Workspace::new()?;
@@ -54,8 +60,13 @@ async fn main() -> anyhow::Result<()> {
     let mut watcher = FsWatcher::new(frame_path.clone(), sender)?;
     watcher.start()?;
 
-    for _ in 1..args.threads {
-        workers.push(process_frames_worker(receiver.clone(), resize_path.clone()));
+    for _ in 0..args.threads {
+        workers.push(process_frames_worker(
+            receiver.clone(),
+            resize_path.clone(),
+            data_dir.clone(),
+            args.output_format.clone(),
+        ));
     }
 
     extract_frames(&input, args.interval, &frame_path).context("extract frame using ffmpeg")?;
@@ -66,9 +77,40 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn find_data_dir() -> anyhow::Result<String> {
+    // current dir
+    fn has_train_data(input: &Path) -> anyhow::Result<bool> {
+        for file in input.read_dir()? {
+            if let Ok(f) = file {
+                if f.file_name().to_string_lossy().ends_with(".traineddata") {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    let exe = std::env::current_exe()?;
+    let exe_path = exe.parent().unwrap_or(Path::new("/")).clone();
+    if has_train_data(exe_path)? {
+        return Ok(exe_path.to_string_lossy().to_string());
+    }
+
+    let current_dir = std::env::current_dir()?;
+    if has_train_data(&current_dir)? {
+        return Ok(current_dir.to_string_lossy().to_string());
+    }
+
+    eprintln!("train data was not found. Please download training data for english language using:\ncurl -o \"{}/eng.traineddata\" https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/eng.traineddata\n\n", exe_path.to_string_lossy());
+    panic!("train data was not found")
+}
+
 fn process_frames_worker(
     receiver: Receiver<PathBuf>,
     tmp_path: PathBuf,
+    data_dir: String,
+    out_format: String,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
@@ -76,11 +118,11 @@ fn process_frames_worker(
                 continue;
             };
 
-            match detect_location(&source, &tmp_path.clone()) {
+            match detect_location(&source, &tmp_path.clone(), &data_dir) {
                 Ok(location) => {
                     let coordinates = parser::parse_coordinate_from_lines(location)
                         .into_iter()
-                        .map(|c| c.to_decimal())
+                        .map(|c| c.to_decimal_with_format(&out_format))
                         .collect::<Vec<_>>();
 
                     if !coordinates.is_empty() {
@@ -107,6 +149,8 @@ fn extract_frames(input: &Path, interval_sec: u32, out_dir: &PathBuf) -> anyhow:
             ),
         ])
         .args(["-vsync", "0"])
+        .args(["-s", "1280x720"])
+        //.args(["-threads", "4"])
         .arg("f%09d.jpg")
         .current_dir(out_dir)
         .stdout(Stdio::null())
@@ -114,13 +158,16 @@ fn extract_frames(input: &Path, interval_sec: u32, out_dir: &PathBuf) -> anyhow:
         .context("start ffmpeg to extract frames")?;
 
     if !i.status.success() {
-        return Err(anyhow!("ffmpeg process exited with error"));
+        panic!(
+            "ffmpeg process exited with error:\n{}",
+            String::from_utf8_lossy(&i.stderr)
+        );
     }
 
     Ok(())
 }
 
-fn detect_location(source: &Path, tmp_path: &PathBuf) -> anyhow::Result<String> {
+fn detect_location(source: &Path, tmp_path: &PathBuf, data_dir: &str) -> anyhow::Result<String> {
     let image_name = source.to_str().ok_or_else(|| anyhow::anyhow!(""))?;
     let out_name = tmp_path.join(format!(
         "{}-edit.jpg",
@@ -138,7 +185,7 @@ fn detect_location(source: &Path, tmp_path: &PathBuf) -> anyhow::Result<String> 
             .context("update image")?;
     }
 
-    let tess = Tesseract::new(Some("."), Some("eng"))?;
+    let tess = Tesseract::new(Some(&data_dir), Some("eng"))?;
     let mut tess = tess
         .set_image(&out_name.to_string_lossy().to_string())
         .context("set image")?;
