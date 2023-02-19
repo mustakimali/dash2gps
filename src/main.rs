@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use chrono::Utc;
 use clap::Parser;
 use crossbeam_channel::{unbounded, Receiver};
@@ -141,16 +141,9 @@ fn extract_frames(input: &Path, interval_sec: u32, out_dir: &PathBuf) -> anyhow:
     let input = input.to_str().ok_or(anyhow::anyhow!("e"))?;
     let i = Command::new("ffmpeg")
         .args(["-i", input])
-        .args([
-            "-vf",
-            &format!(
-                r#"select=bitor(gte(t-prev_selected_t\,{})\,isnan(prev_selected_t))"#,
-                interval_sec
-            ),
-        ])
-        .args(["-vsync", "0"])
+        .args(["-vf", &format!("fps=1/{}", interval_sec)])
         .args(["-s", "1280x720"])
-        //.args(["-threads", "4"])
+        //.args(["-threads", "8"])
         .arg("f%09d.jpg")
         .current_dir(out_dir)
         .stdout(Stdio::null())
@@ -176,7 +169,7 @@ fn detect_location(source: &Path, tmp_path: &PathBuf, data_dir: &str) -> anyhow:
     {
         let mut f = std::fs::File::create(&out_name).context("open file")?;
         let mut i = image::open(&image_name).context("open image")?;
-        let mut i = i.crop(0, i.height() - 60, i.width(), 60).grayscale();
+        let mut i = i.crop(0, i.height() - 50, i.width(), 50).grayscale();
         i.invert();
 
         i.adjust_contrast(-500.0)
