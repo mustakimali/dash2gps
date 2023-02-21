@@ -16,6 +16,7 @@ docker run --rm --it -w /app/data -v ${PWD}:/app/data mustakimali/dash2gps foota
 ```
 
 The output will be the latitude & longitude:
+
 ```
 51.429447,0.3236111
 51.428333,0.3263889
@@ -27,6 +28,10 @@ The output will be the latitude & longitude:
 51.418613,0.34861112
 51.417778,0.35166666
 ```
+
+When plotted using something like [Map Maker](https://maps.co/gis/)
+
+![Coordinate plotted in a map](sample-plot.jpg)
 
 
 ## Run locally
