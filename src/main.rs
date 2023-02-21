@@ -39,6 +39,10 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    if !Path::new(&args.input).exists() {
+        panic!("Invalid video path: {}", args.input);
+    }
+
     // find data dir
     let data_dir = find_data_dir()?;
 
