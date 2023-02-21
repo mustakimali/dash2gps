@@ -9,7 +9,7 @@ The only way to extract GPS location is to process the video frames using OCR te
 
 ## Run using Docker
 
-The best way to run is to use docker with the [pre-built container](https://hub.docker.com/repository/docker/mustakimali/dash2gps). `cd` into the folder where you have your DashCam footage (eg. `footage.mov`)
+The best way to run is to use docker with the [pre-built container](https://hub.docker.com/r/mustakimali/dash2gps). `cd` into the folder where you have your DashCam footage (eg. `footage.mov`)
 
 ```sh
 docker run --rm --it -w /app/data -v ${PWD}:/app/data mustakimali/dash2gps footage.mov
