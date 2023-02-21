@@ -20,17 +20,11 @@ mod watcher;
 #[derive(Parser, Debug)]
 struct Args {
     /// Path of the video file
-    #[arg(short, long)]
     input: String,
 
     /// Find locations at interval in the video
     #[arg(long, default_value = "10")]
     interval: u32,
-
-    /// Crop frames
-    /// Format: left top right bottom
-    /// Unit: px/(empty) OR %
-    crop: Option<String>,
 
     #[arg(long, default_value = "4")]
     threads: u8,
@@ -69,7 +63,9 @@ async fn main() -> anyhow::Result<()> {
         ));
     }
 
-    extract_frames(&input, args.interval, &frame_path).context("extract frame using ffmpeg")?;
+    extract_frames(&input, args.interval, &frame_path, args.threads)
+        .context("extract frame using ffmpeg")?;
+
     SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
 
     futures_util::future::join_all(workers).await;
@@ -80,11 +76,9 @@ async fn main() -> anyhow::Result<()> {
 fn find_data_dir() -> anyhow::Result<String> {
     // current dir
     fn has_train_data(input: &Path) -> anyhow::Result<bool> {
-        for file in input.read_dir()? {
-            if let Ok(f) = file {
-                if f.file_name().to_string_lossy().ends_with(".traineddata") {
-                    return Ok(true);
-                }
+        for file in input.read_dir()?.flatten() {
+            if file.file_name().to_string_lossy().ends_with(".traineddata") {
+                return Ok(true);
             }
         }
 
@@ -92,7 +86,7 @@ fn find_data_dir() -> anyhow::Result<String> {
     }
 
     let exe = std::env::current_exe()?;
-    let exe_path = exe.parent().unwrap_or(Path::new("/")).clone();
+    let exe_path = exe.parent().unwrap_or(Path::new("/"));
     if has_train_data(exe_path)? {
         return Ok(exe_path.to_string_lossy().to_string());
     }
@@ -135,40 +129,47 @@ fn process_frames_worker(
     })
 }
 
-fn extract_frames(input: &Path, interval_sec: u32, out_dir: &PathBuf) -> anyhow::Result<()> {
-    // extract image every 10s
-    // ffmpeg -i input.mp4 -vf "select=bitor(gte(t-prev_selected_t\,10)\,isnan(prev_selected_t))" -vsync 0 f%09d.jpg
+fn extract_frames(
+    input: &Path,
+    interval_sec: u32,
+    out_dir: &PathBuf,
+    threads: u8,
+) -> anyhow::Result<()> {
     let input = input.to_str().ok_or(anyhow::anyhow!("e"))?;
-    let i = Command::new("ffmpeg")
+    let ffmpeg = Command::new("ffmpeg")
         .args(["-i", input])
         .args(["-vf", &format!("fps=1/{}", interval_sec)])
         .args(["-s", "1280x720"])
-        //.args(["-threads", "8"])
+        .args(["-threads", &threads.to_string()])
         .arg("f%09d.jpg")
         .current_dir(out_dir)
         .stdout(Stdio::null())
-        .output()
+        .stderr(Stdio::null())
+        .spawn()
         .context("start ffmpeg to extract frames")?;
+    let result = ffmpeg.wait_with_output()?;
 
-    if !i.status.success() {
+    if !result.status.success() {
         panic!(
             "ffmpeg process exited with error:\n{}",
-            String::from_utf8_lossy(&i.stderr)
+            String::from_utf8_lossy(&result.stderr)
         );
     }
 
     Ok(())
 }
 
-fn detect_location(source: &Path, tmp_path: &PathBuf, data_dir: &str) -> anyhow::Result<String> {
-    let image_name = source.to_str().ok_or_else(|| anyhow::anyhow!(""))?;
+fn detect_location(source: &Path, tmp_path: &Path, data_dir: &str) -> anyhow::Result<String> {
+    let image_name = source
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("unable to parse source path"))?;
     let out_name = tmp_path.join(format!(
         "{}-edit.jpg",
         source.file_name().unwrap_or_default().to_string_lossy()
     ));
     {
         let mut f = std::fs::File::create(&out_name).context("open file")?;
-        let mut i = image::open(&image_name).context("open image")?;
+        let mut i = image::open(image_name).context("open image")?;
         let mut i = i.crop(0, i.height() - 50, i.width(), 50).grayscale();
         i.invert();
 
@@ -178,9 +179,10 @@ fn detect_location(source: &Path, tmp_path: &PathBuf, data_dir: &str) -> anyhow:
             .context("update image")?;
     }
 
-    let tess = Tesseract::new(Some(&data_dir), Some("eng"))?;
+    let tess = Tesseract::new(Some(data_dir), Some("eng"))?;
     let mut tess = tess
-        .set_image(&out_name.to_string_lossy().to_string())
+        .set_variable("user_defined_dpi", "96")?
+        .set_image(&out_name.to_string_lossy())
         .context("set image")?;
 
     tess.get_text().map_err(anyhow::Error::from)

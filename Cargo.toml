@@ -2,8 +2,8 @@
 name = "dash2gps"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT OR Apache-2.0"
+authors = ["Mohammad Mustakim Ali"]
 
 [dependencies]
 anyhow = "1.0.69"
@@ -18,3 +18,9 @@ tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "macros"] }
 futures-util = "0.3.26"
 regex = "1.7.1"
 once_cell = "1.17.1"
+
+[profile.release]
+panic = 'abort'
+
+[profile.dev]
+panic = 'abort'

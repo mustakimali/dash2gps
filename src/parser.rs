@@ -7,9 +7,8 @@ use regex::{Captures, Regex};
 pub fn parse_coordinate_from_lines(lines: impl Into<String>) -> Vec<Coordinate> {
     lines
         .into()
-        .split("\n")
-        .map(CoordinateDms::try_parse)
-        .flatten()
+        .split('\n')
+        .flat_map(CoordinateDms::try_parse)
         .map(Coordinate::DegreeMinSec)
         .collect::<Vec<_>>()
 }
@@ -19,6 +18,7 @@ pub enum Coordinate {
 }
 
 impl Coordinate {
+    #[allow(dead_code)]
     pub fn to_decimal(&self) -> String {
         self.to_decimal_with_format("{lat}, {lon}")
     }
@@ -112,12 +112,11 @@ impl CoordinateDms {
         });
 
         let input_s = input
-        .replace("O", "0") // O -> 0
-        .replace("Q", "0") // Q -> 0
+            .replace(['O'  ,'Q'], "0") // O/Q -> 0
         ;
 
-        for cap in REGEX.captures_iter(&input_s) {
-            return Ok(Self {
+        match REGEX.captures_iter(&input_s).next() {
+            Some(cap) => Ok(Self {
                 lat_direction: Self::from_capture_as_str(&cap, 1)?.parse::<_>()?,
                 lat_degree: Self::from_capture_as_str(&cap, 2)?.parse::<_>()?,
                 lat_min: Self::from_capture_as_str(&cap, 3)?.parse::<_>()?,
@@ -126,10 +125,9 @@ impl CoordinateDms {
                 lon_degree: Self::from_capture_as_str(&cap, 6)?.parse::<_>()?,
                 lon_min: Self::from_capture_as_str(&cap, 7)?.parse::<_>()?,
                 lon_sec: Self::from_capture_as_str(&cap, 8)?.parse::<_>()?,
-            });
+            }),
+            _ => Err(anyhow!("failed")),
         }
-
-        Err(anyhow!("failed"))
     }
 
     fn from_capture_as_str<'c>(cap: &'c Captures, index: usize) -> anyhow::Result<&'c str> {
