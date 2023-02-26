@@ -38,7 +38,7 @@ When plotted using something like [Map Maker](https://maps.co/gis/)
 
 ```sh
 # Install required dependencies (for Linux)
-sudo apt-get install libtesseract-dev clang
+sudo apt-get install libtesseract-dev clang ffmpeg
 
 # Run the app
 cargo run -- path/to/footage.mov
