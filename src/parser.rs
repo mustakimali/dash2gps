@@ -13,6 +13,7 @@ pub fn parse_coordinate_from_lines(lines: impl Into<String>) -> Vec<Coordinate> 
         .collect::<Vec<_>>()
 }
 
+#[derive(Clone)]
 pub enum Coordinate {
     DegreeMinSec(CoordinateDms),
 }
@@ -57,8 +58,47 @@ impl Coordinate {
             dms.lon_degree as f32 + (dms.lon_min as f32 / 60.0) + (dms.lon_sec as f32 / 3600.0);
         (lat, lon)
     }
+
+    pub(crate) fn speed_from(&self, last: Coordinate, interval: chrono::Duration) -> Speed {
+        let (kmph, direction) = speed_and_direction(last.to_dms(), self.to_dms(), interval);
+        let direction_string = if direction >= -22.5 && direction < 22.5 {
+            "E".to_string()
+        } else if direction >= 22.5 && direction < 67.5 {
+            "NE".to_string()
+        } else if direction >= 67.5 && direction < 112.5 {
+            "N".to_string()
+        } else if direction >= 112.5 && direction < 157.5 {
+            "NW".to_string()
+        } else if direction >= 157.5 || direction < -157.5 {
+            "W".to_string()
+        } else if direction >= -157.5 && direction < -112.5 {
+            "SW".to_string()
+        } else if direction >= -112.5 && direction < -67.5 {
+            "S".to_string()
+        } else {
+            "SE".to_string()
+        };
+        Speed {
+            kmph,
+            direction,
+            direction_string,
+        }
+    }
+
+    fn to_dms(&self) -> &CoordinateDms {
+        match self {
+            Coordinate::DegreeMinSec(dms) => dms,
+        }
+    }
 }
 
+#[derive(Clone, Debug)]
+pub struct Speed {
+    kmph: i64,
+    direction: f64,
+    direction_string: String,
+}
+#[derive(Clone)]
 pub struct CoordinateDms {
     lat_direction: DirectionLat,
     lat_degree: i8,
@@ -71,11 +111,13 @@ pub struct CoordinateDms {
     lon_sec: i8,
 }
 
+#[derive(Clone)]
 pub enum DirectionLat {
     North,
     South,
 }
 
+#[derive(Clone)]
 pub enum DirectionLon {
     East,
     West,
@@ -134,6 +176,60 @@ impl CoordinateDms {
         cap.get(index)
             .map(|r| r.as_str())
             .ok_or_else(|| anyhow::anyhow!(format!("could not find items with index {}", index)))
+    }
+}
+
+pub fn speed_and_direction(
+    coord1: &CoordinateDms,
+    coord2: &CoordinateDms,
+    time_interval: chrono::Duration,
+) -> (i64, f64) {
+    // Convert the DMS coordinates to decimal degrees
+    let lat1 = coord1.lat_direction.to_sign() as f64 * coord1.lat_degree as f64
+        + coord1.lat_min as f64 / 60.0
+        + coord1.lat_sec as f64 / 3600.0;
+    let lon1 = coord1.lon_direction.to_sign() as f64 * coord1.lon_degree as f64
+        + coord1.lon_min as f64 / 60.0
+        + coord1.lon_sec as f64 / 3600.0;
+
+    let lat2 = coord2.lat_direction.to_sign() as f64 * coord2.lat_degree as f64
+        + coord2.lat_min as f64 / 60.0
+        + coord2.lat_sec as f64 / 3600.0;
+    let lon2 = coord2.lon_direction.to_sign() as f64 * coord2.lon_degree as f64
+        + coord2.lon_min as f64 / 60.0
+        + coord2.lon_sec as f64 / 3600.0;
+
+    // Calculate the distance between the two coordinates
+    let earth_radius = 6371.0; // km
+    let delta_lat = (lat2 - lat1).to_radians();
+    let delta_lon = (lon2 - lon1).to_radians();
+    let a = (delta_lat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (delta_lon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    let distance = earth_radius * c;
+
+    // Calculate the speed and direction
+    let speed_kmph = distance as f64 * 3600.0 / time_interval.num_seconds() as f64;
+    let direction = delta_lon.atan2(delta_lat).to_degrees();
+
+    (speed_kmph as i64, direction)
+}
+
+impl DirectionLat {
+    fn to_sign(&self) -> i8 {
+        match self {
+            DirectionLat::North => 1,
+            DirectionLat::South => -1,
+        }
+    }
+}
+
+impl DirectionLon {
+    fn to_sign(&self) -> i8 {
+        match self {
+            DirectionLon::East => 1,
+            DirectionLon::West => -1,
+        }
     }
 }
 

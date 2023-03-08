@@ -6,10 +6,11 @@ use std::{
 };
 
 use anyhow::Context;
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use clap::Parser;
 use crossbeam_channel::{unbounded, Receiver};
 use image::ImageOutputFormat;
+use regex::Regex;
 use tesseract::Tesseract;
 
 use crate::watcher::FsWatcher;
@@ -31,6 +32,16 @@ struct Args {
 
     #[arg(long, default_value = "{lat},{lon}")]
     output_format: String,
+
+    /// When given a format, it tries to determine the time from the file name
+    /// Default is the format used in nextbase dashcam footage, eg. `201124_174859_011_LO.MOV`
+    /// The flag `time_from_filename_regex` is used before to clean the fileaname to extract the
+    /// Date and time information before passing to [`chrono::NaiveDateTime::parse_from_str`] function.
+    #[arg(long, default_value = "%y%m%d_%H%M%S")]
+    time_from_filename_format: String,
+
+    #[arg(long, default_value = r"(\d{6}_\d{6})")]
+    time_from_filename_regex: String,
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -42,6 +53,13 @@ async fn main() -> anyhow::Result<()> {
     if !Path::new(&args.input).exists() {
         panic!("Invalid video path: {}", args.input);
     }
+
+    let start_date = parse_date(
+        &args.time_from_filename_regex,
+        &args.time_from_filename_format,
+        &args.input,
+    )
+    .ok();
 
     // find data dir
     let data_dir = find_data_dir()?;
@@ -64,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
             resize_path.clone(),
             data_dir.clone(),
             args.output_format.clone(),
+            start_date,
+            args.interval,
         ));
     }
 
@@ -109,8 +129,13 @@ fn process_frames_worker(
     tmp_path: PathBuf,
     data_dir: String,
     out_format: String,
+    start_date: Option<NaiveDateTime>,
+    interval: u32,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut last_coordinate = None;
+        let mut last_checkpoint_duration_sec = 10;
+
         while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
             let Ok(source) = receiver.recv_timeout(Duration::from_millis(250)) else {
                 continue;
@@ -118,13 +143,51 @@ fn process_frames_worker(
 
             match detect_location(&source, &tmp_path.clone(), &data_dir) {
                 Ok(location) => {
-                    let coordinates = parser::parse_coordinate_from_lines(location)
+                    let coordinates = parser::parse_coordinate_from_lines(location);
+
+                    let speed = if let Some(current) = coordinates.last().cloned() {
+                        last_checkpoint_duration_sec += interval;
+                        let speed = match last_coordinate {
+                            Some(last) => Some(current.speed_from(
+                                last,
+                                chrono::Duration::seconds(last_checkpoint_duration_sec as _),
+                            )),
+                            None => None,
+                        };
+                        last_coordinate = Some(current);
+                        last_checkpoint_duration_sec = 0;
+
+                        speed
+                    } else {
+                        last_checkpoint_duration_sec += interval;
+
+                        None
+                    };
+
+                    let coordinates = coordinates
                         .into_iter()
                         .map(|c| c.to_decimal_with_format(&out_format))
                         .collect::<Vec<_>>();
 
                     if !coordinates.is_empty() {
-                        println!("{}", coordinates.join("\n"));
+                        let prefix = if let Some(start_date) = start_date {
+                            let frame_no = source.file_name().clone().unwrap().to_string_lossy()
+                                [1..10]
+                                .parse::<i64>()
+                                .unwrap()
+                                - 1; // make 0 based
+                            let time = start_date
+                                .checked_add_signed(chrono::Duration::seconds(
+                                    frame_no * interval as i64,
+                                ))
+                                .unwrap();
+
+                            format!("{} {:?}| ", time, speed)
+                        } else {
+                            "".to_string()
+                        };
+
+                        println!("{prefix}{}", coordinates.join("|"));
                     }
                 }
                 Err(e) => eprintln!("Error: {} ({})", e, source.to_string_lossy()),
@@ -218,4 +281,20 @@ impl Drop for Workspace {
     fn drop(&mut self) {
         _ = std::fs::remove_dir_all(&self.path);
     }
+}
+
+fn parse_date(clean_reg: &str, fmt: &str, input: &str) -> anyhow::Result<NaiveDateTime> {
+    let re = Regex::new(clean_reg).context("parse regex")?;
+    let input = re.find(input).context("clean the filename")?.as_str();
+    Ok(chrono::NaiveDateTime::parse_from_str(input, fmt)?)
+}
+
+#[test]
+fn test_parse_date() {
+    let input = "201124_174859_011_LO.MOV";
+    let re = Regex::new(r"(\d{6}_\d{6})").unwrap();
+    let input = re.find(input).unwrap().as_str();
+    let parsed = chrono::NaiveDateTime::parse_from_str(input, "%y%m%d_%H%M%S").unwrap();
+
+    assert_eq!(parsed.to_string(), "2020-11-24 17:48:59");
 }
